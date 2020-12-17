@@ -24,6 +24,55 @@ from setuptools import setup, find_packages
 from setuptools.extension import Extension
 from setuptools.command.build_ext import build_ext
 
+
+# Because this library provides extension modules for macOS, but not for other
+# platforms, we want to provide built distributions for each macOS platform, but we
+# explicitly DON'T want to provide a cross-platform pure-Python wheel to fall back on.
+#
+# This is because in the event that a new Python version is released or a new
+# macOS platform is released, macOS users won't be able to install the built
+# distributions we've provided and should fall back to the source distribution,
+# but pip's behavior is to prefer a pure-Python wheel first, which will be
+# missing the extension modules.
+#
+# However, to provide built distributions for Linux and Windows (which don't
+# have extension modules) we can just build a pure-Python wheel on that
+# platform and override the platform name manually via wheel's --plat-name
+# feature, to provide a platform-specific wheel.
+#
+# Since this is fairly uncommon, and because we are not invoking wheel
+# directly, we do this by overriding the bdist_wheel command to set
+# `--plat-name` at build time.
+try:
+    from wheel.bdist_wheel import get_platform, bdist_wheel as _bdist_wheel
+
+    class bdist_wheel(_bdist_wheel):
+        def finalize_options(self):
+            # Call the original function first
+            _bdist_wheel.finalize_options(self)
+
+            # Get the current platform name that we're building on
+            plat_name = get_platform(None)
+
+            # Rewrite the platform name if necessary
+            if plat_name.startswith("macosx"):
+                # We're building for macosx, which is actually platform-specific
+                pass
+            elif plat_name.startswith("linux"):
+                # This is a pure Python wheel that will work on any Linux platform
+                self.plat_name_supplied = True
+                self.plat_name = "manylinux2014"
+            else:
+                # This is a pure Python wheel that will work on any Windows platform
+                self.plat_name_supplied = True
+                self.plat_name = plat_name
+
+
+except ImportError:
+    # Same behavior as if wheel is not installed in the buid environment
+    bdist_wheel = None
+
+
 SRC_DIR = 'src'
 WATCHDOG_PKG_DIR = os.path.join(SRC_DIR, 'watchdog')
 
@@ -144,6 +193,7 @@ setup(name="watchdog",
       extras_require=extras_require,
       cmdclass={
           'build_ext': build_ext,
+          'bdist_wheel': bdist_wheel,
       },
       ext_modules=ext_modules,
       entry_points={'console_scripts': [
